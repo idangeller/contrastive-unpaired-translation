@@ -33,6 +33,18 @@ def make_dataset(dir, max_dataset_size=float("inf")):
     return images[:min(max_dataset_size, len(images))]
 
 
+def make_IR_dataset(dir, IR_json_list, max_dataset_size=float("inf")):
+    images = []
+    
+    assert os.path.isdir(dir) or os.path.islink(dir), '%s is not a valid directory' % dir
+
+    for image_item in IR_json_list:
+        fname = os.path.basename(image_item['file_name'])
+        if is_image_file(fname):
+            path = os.path.join(dir, fname)
+            images.append(path)
+    return images[:min(max_dataset_size, len(images))]
+
 def default_loader(path):
     return Image.open(path).convert('RGB')
 

@@ -5,6 +5,12 @@ from . import networks
 from .patchnce import PatchNCELoss
 import util.util as util
 
+import torchvision
+from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
+import json
+#import utils
+import math
+import sys
 
 class CUTModel(BaseModel):
     """ This class implements CUT and FastCUT model, described in the paper
@@ -75,8 +81,16 @@ class CUTModel(BaseModel):
         self.netG = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, opt.netG, opt.normG, not opt.no_dropout, opt.init_type, opt.init_gain, opt.no_antialias, opt.no_antialias_up, self.gpu_ids, opt)
         self.netF = networks.define_F(opt.input_nc, opt.netF, opt.normG, not opt.no_dropout, opt.init_type, opt.init_gain, opt.no_antialias, self.gpu_ids, opt)
 
+        #Shir
+
+        
+
+
+
         if self.isTrain:
             self.netD = networks.define_D(opt.output_nc, opt.ndf, opt.netD, opt.n_layers_D, opt.normD, opt.init_type, opt.init_gain, opt.no_antialias, self.gpu_ids, opt)
+            # load a model pre-trained on COCO
+            self.netDet = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True)
 
             # define loss functions
             self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)
@@ -88,8 +102,13 @@ class CUTModel(BaseModel):
             self.criterionIdt = torch.nn.L1Loss().to(self.device)
             self.optimizer_G = torch.optim.Adam(self.netG.parameters(), lr=opt.lr, betas=(opt.beta1, opt.beta2))
             self.optimizer_D = torch.optim.Adam(self.netD.parameters(), lr=opt.lr, betas=(opt.beta1, opt.beta2))
+            self.optimizer_Detector = torch.optim.Adam(self.netDet.parameters(), lr=opt.lr, betas=(opt.beta1, opt.beta2))
+
             self.optimizers.append(self.optimizer_G)
             self.optimizers.append(self.optimizer_D)
+            self.optimizers.append(self.optimizer_Detector)
+
+            self.loss_det = 0
 
     def data_dependent_initialize(self, data):
         """
@@ -120,6 +139,16 @@ class CUTModel(BaseModel):
         self.loss_D = self.compute_D_loss()
         self.loss_D.backward()
         self.optimizer_D.step()
+
+        # update detector
+        self.set_requires_grad(self.netD, False)
+        self.optimizer_Detector.zero_grad()
+        self.loss_det = self.compute_det_loss()
+        self.loss_det.backward(retain_graph=True)
+        self.optimizer_Detector.step()        
+        self.netDet.eval()
+        #metric_logger.update(loss=losses_reduced, **loss_dict_reduced)
+        #metric_logger.update(lr=optimizer.param_groups[0]["lr"])
 
         # update G
         self.set_requires_grad(self.netD, False)
@@ -154,7 +183,36 @@ class CUTModel(BaseModel):
         self.fake = self.netG(self.real)
         self.fake_B = self.fake[:self.real_A.size(0)]
         if self.opt.nce_idt:
-            self.idt_B = self.fake[self.real_A.size(0):]
+            self.idt_B = self.fake[self.real_A.size(0):]        
+
+        self.netDet.eval()
+        self.det_real = self.netDet(self.real)
+        
+        #im = torchvision.transforms.ToPILImage()(self.real[0,...])       
+        #im.show()
+        
+    def compute_det_loss(self):
+        #----Shir----
+        fake = self.fake_B.detach()
+        self.netDet.train()
+        loss_det_dict = self.netDet(fake, self.det_real)
+
+        self.loss_det = sum(loss for loss in loss_det_dict.values())
+
+        # reduce losses over all GPUs for logging purposes
+        
+        '''
+        loss_dict_reduced = utils.reduce_dict(loss_det_dict)
+        losses_reduced = sum(loss for loss in loss_dict_reduced.values())
+
+        loss_value = losses_reduced.item()
+
+        if not math.isfinite(loss_value):
+            print("Loss is {}, stopping training".format(loss_value))
+            print(loss_dict_reduced)
+            sys.exit(1)        
+        '''
+        return self.loss_det
 
     def compute_D_loss(self):
         """Calculate GAN loss for the discriminator"""
@@ -169,7 +227,25 @@ class CUTModel(BaseModel):
 
         # combine loss and calculate gradients
         self.loss_D = (self.loss_D_fake + self.loss_D_real) * 0.5
-        return self.loss_D
+
+        
+        
+        # DetLoss = sum(loss for loss in loss_dict.values())
+        # self.loss_D += DetLoss
+
+        #im = torchvision.transforms.ToPILImage()(self.fake[0,...])       
+        #im.show()
+       
+        
+        # t=[{'boxes': torch.tensor([[  3.4802,  28.6969, 250.5137, 248.0318]]), 
+        #     'labels': torch.tensor([17]), 
+        #     'scores': torch.tensor([0.1078])}]
+
+        # loss_dict = self.netDet(fake, t)
+        # DetLoss = sum(loss for loss in loss_dict.values())
+        # self.loss_D += DetLoss
+
+        return self.loss_D #+ self.loss_det
 
     def compute_G_loss(self):
         """Calculate GAN and NCE loss for the generator"""
@@ -177,7 +253,8 @@ class CUTModel(BaseModel):
         # First, G(A) should fake the discriminator
         if self.opt.lambda_GAN > 0.0:
             pred_fake = self.netD(fake)
-            self.loss_G_GAN = self.criterionGAN(pred_fake, True).mean() * self.opt.lambda_GAN
+            pred_det = self.loss_det
+            self.loss_G_GAN = self.criterionGAN(pred_fake + pred_det, True).mean() * self.opt.lambda_GAN
         else:
             self.loss_G_GAN = 0.0
 

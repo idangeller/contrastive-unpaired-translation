@@ -1,12 +1,12 @@
 import os.path
 from data.base_dataset import BaseDataset, get_transform
-from data.image_folder import make_dataset
+from data.image_folder import make_dataset, make_IR_dataset
 from PIL import Image
 import random
 import util.util as util
 import json
 
-class UnalignedDataset(BaseDataset):
+class IRDataset(BaseDataset):
     """
     This dataset class can load unaligned/unpaired datasets.
 
@@ -23,6 +23,13 @@ class UnalignedDataset(BaseDataset):
         Parameters:
             opt (Option class) -- stores all the experiment flags; needs to be a subclass of BaseOptions
         """
+
+        if opt.load_ant:
+            with open('/Users/idan/repos/contrastive-unpaired-translation/datasets/InfraRed/trainA/thermal_annotations.json') as f:
+                self.ants_ir = json.load(f)
+            with open('/Users/idan/repos/contrastive-unpaired-translation/datasets/InfraRed/trainB/rgb_annotations.json') as f:
+                self.ants_rgb = json.load(f)
+                        
         BaseDataset.__init__(self, opt)
         self.dir_A = os.path.join(opt.dataroot, opt.phase + 'A')  # create a path '/path/to/data/trainA'
         self.dir_B = os.path.join(opt.dataroot, opt.phase + 'B')  # create a path '/path/to/data/trainB'
@@ -34,10 +41,26 @@ class UnalignedDataset(BaseDataset):
 
         self.A_paths = sorted(make_dataset(self.dir_A, opt.max_dataset_size))   # load images from '/path/to/data/trainA'
         self.B_paths = sorted(make_dataset(self.dir_B, opt.max_dataset_size))    # load images from '/path/to/data/trainB'
-        self.A_size = len(self.A_paths)  # get the size of dataset A
-        self.B_size = len(self.B_paths)  # get the size of dataset B
+        self.A_size = len(self.ants['images'])  # get the size of dataset A
+        self.B_size = len(self.ants['images'])  # get the size of dataset B
 
- 
+
+
+        '''
+        import torchvision.datasets as dset
+        import torchvision.transforms as transforms
+        cap = dset.CocoDetection(root = self.dir_A,
+                                annFile = '/Users/idan/repos/contrastive-unpaired-translation/datasets/InfraRed/trainA/thermal_annotations.json',
+                                transform=transforms.ToTensor())
+        print('Number of samples: ', len(cap))
+        
+        img, target = cap[3] # load 4th sample
+
+        print("Image Size: ", img.size())
+        print(target)
+        '''
+        
+
 
     def __getitem__(self, index, with_annotations=False):
         """Return a data point and its metadata information.
@@ -51,7 +74,12 @@ class UnalignedDataset(BaseDataset):
             A_paths (str)    -- image paths
             B_paths (str)    -- image paths
         """
-        A_path = self.A_paths[index % self.A_size]  # make sure index is within then range
+
+        A_path = self.ants['images'][index % self.A_size]['file_name']  # make sure index is within then range
+        A_path = os.path.join(self.dir_A, os.path.basename(A_path))
+        ants = self.ants['annotations'][index % self.A_size]
+
+        #A_path = self.A_paths[index % self.A_size]  # make sure index is within then range
         if self.opt.serial_batches:   # make sure index is within then range
             index_B = index % self.B_size
         else:   # randomize the index for domain B to avoid fixed pairs.
@@ -69,8 +97,20 @@ class UnalignedDataset(BaseDataset):
         transform = get_transform(modified_opt)
         A = transform(A_img)
         B = transform(B_img)
-      
-        return {'A': A, 'B': B, 'A_paths': A_path, 'B_paths': B_path}
+
+        self.ants['images'].index(A_path)
+        
+        from PIL import ImageDraw
+        draw = ImageDraw.Draw(A_img)
+        draw.rectangle([ants['bbox'][0], ants['bbox'][1], ants['bbox'][2]+ants['bbox'][0], ants['bbox'][3]+ants['bbox'][1]], fill=128)
+        A_img.show()
+        del draw
+
+
+        if with_annotations:
+            return {'A': A, 'B': B, 'A_paths': A_path, 'B_paths': B_path}
+        else:
+            return {'A': A, 'B': B, 'A_paths': A_path, 'B_paths': B_path}
 
     def __len__(self):
         """Return the total number of images in the dataset.
