@@ -90,7 +90,7 @@ class CUTModel(BaseModel):
         if self.isTrain:
             self.netD = networks.define_D(opt.output_nc, opt.ndf, opt.netD, opt.n_layers_D, opt.normD, opt.init_type, opt.init_gain, opt.no_antialias, self.gpu_ids, opt)
             # load a model pre-trained on COCO
-            self.netDet = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True)
+            self.netDet = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True).to(self.device)
 
             # define loss functions
             self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)
