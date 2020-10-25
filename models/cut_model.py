@@ -253,8 +253,12 @@ class CUTModel(BaseModel):
         # First, G(A) should fake the discriminator
         if self.opt.lambda_GAN > 0.0:
             pred_fake = self.netD(fake)
-            pred_det = self.loss_det
-            self.loss_G_GAN = self.criterionGAN(pred_fake + pred_det, True).mean() * self.opt.lambda_GAN
+            #pred_det = self.netDet(fake) - self.det_real
+            self.netDet.train()
+            loss_det_dict = self.netDet(fake, self.det_real)
+            loss_det = sum(loss for loss in loss_det_dict.values())
+
+            self.loss_G_GAN = self.criterionGAN(pred_fake + loss_det, True).mean() * self.opt.lambda_GAN
         else:
             self.loss_G_GAN = 0.0
 
